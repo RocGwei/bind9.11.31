@@ -848,6 +848,7 @@ parse_command_line(int argc, char *argv[]) {
 	}
 }
 
+// 创建 taskmgr/timermgr/socketmgr/entropy/hash
 static isc_result_t
 create_managers(void) {
 	isc_result_t result;
@@ -922,6 +923,7 @@ create_managers(void) {
 		return (ISC_R_UNEXPECTED);
 	}
 
+	// 创建 hash 但不初始化
 	result = isc_hash_create(ns_g_mctx, ns_g_entropy, DNS_NAME_MAXWIRE);
 	if (result != ISC_R_SUCCESS) {
 		UNEXPECTED_ERROR(__FILE__, __LINE__,
@@ -1334,6 +1336,7 @@ setup(void) {
 				   isc_result_totext(result));
 #endif
 
+	// 创建 server，设定默认值，设置回调
 	ns_server_create(ns_g_mctx, &ns_g_server);
 
 #ifdef HAVE_LIBSECCOMP
@@ -1547,6 +1550,7 @@ main(int argc, char *argv[]) {
 					     ns_g_conffile, ns_g_chrootdir);
 	}
 
+	// 创建主内存上下文
 	result = isc_mem_create(0, 0, &ns_g_mctx);
 	if (result != ISC_R_SUCCESS)
 		ns_main_earlyfatal("isc_mem_create() failed: %s",

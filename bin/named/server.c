@@ -8825,16 +8825,17 @@ load_zones(ns_server_t *server, bool init, bool reconfig) {
 	ns_zoneload_t *zl;
 	unsigned int refs = 0;
 
-	zl = isc_mem_get(server->mctx, sizeof (*zl));
+	zl = isc_mem_get(server->mctx, sizeof (*zl)); // 分配 zone 加载上下文
 	if (zl == NULL)
 		return (ISC_R_NOMEMORY);
 	zl->server = server;
 	zl->reconfig = reconfig;
 
+	// 进入独占任务模式（保证在此期间只有本任务运行）
 	result = isc_task_beginexclusive(server->task);
 	RUNTIME_CHECK(result == ISC_R_SUCCESS);
 
-	isc_refcount_init(&zl->refs, 1);
+	isc_refcount_init(&zl->refs, 1); // 初始化引用计数为 1
 
 	/*
 	 * Schedule zones to be loaded from disk.
@@ -8844,6 +8845,7 @@ load_zones(ns_server_t *server, bool init, bool reconfig) {
 	     view = ISC_LIST_NEXT(view, link))
 	{
 		if (view->managed_keys != NULL) {
+			// 加载 managed-keys zone
 			result = dns_zone_load(view->managed_keys);
 			if (result != ISC_R_SUCCESS &&
 			    result != DNS_R_UPTODATE &&
@@ -8851,6 +8853,7 @@ load_zones(ns_server_t *server, bool init, bool reconfig) {
 				goto cleanup;
 		}
 		if (view->redirect != NULL) {
+			// 加载 redirect zone（NXDOMAIN 重定向）
 			result = dns_zone_load(view->redirect);
 			if (result != ISC_R_SUCCESS &&
 			    result != DNS_R_UPTODATE &&
@@ -8862,7 +8865,8 @@ load_zones(ns_server_t *server, bool init, bool reconfig) {
 		 * 'dns_view_asyncload' calls view_loaded if there are no
 		 * zones.
 		 */
-		isc_refcount_increment(&zl->refs, NULL);
+		// 异步加载 view 中的所有 zone，调用 view_loaded
+		isc_refcount_increment(&zl->refs, NULL); // 每个 view 增加引用计数
 		CHECK(dns_view_asyncload2(view, view_loaded, zl, reconfig));
 	}
 
@@ -8896,17 +8900,20 @@ run_server(isc_task_t *task, isc_event_t *event) {
 
 	isc_event_free(&event);
 
+	// 创建分发管理器（负责管理所有 UDP/TCP 网络通信）
 	CHECKFATAL(dns_dispatchmgr_create(ns_g_mctx, ns_g_entropy,
 					  &ns_g_dispatchmgr),
 		   "creating dispatch manager");
 
 	dns_dispatchmgr_setstats(ns_g_dispatchmgr, server->resolverstats);
 
+	// 创建接口管理器（负责扫描系统上的网络接口）
 	CHECKFATAL(ns_interfacemgr_create(ns_g_mctx, ns_g_taskmgr,
 					  ns_g_socketmgr, ns_g_dispatchmgr,
 					  server->task, &server->interfacemgr),
 		   "creating interface manager");
 
+	// 创建定时器
 	CHECKFATAL(isc_timer_create(ns_g_timermgr, isc_timertype_inactive,
 				    NULL, NULL, server->task,
 				    interface_timer_tick,
@@ -8929,12 +8936,14 @@ run_server(isc_task_t *task, isc_event_t *event) {
 				    server, &server->pps_timer),
 		   "creating pps timer");
 
+	// 创建配置解析器
 	CHECKFATAL(cfg_parser_create(ns_g_mctx, ns_g_lctx, &ns_g_parser),
 		   "creating default configuration parser");
 
 	CHECKFATAL(cfg_parser_create(ns_g_mctx, ns_g_lctx, &ns_g_addparser),
 		   "creating additional configuration parser");
 
+	// 加载配置
 	if (ns_g_lwresdonly)
 		CHECKFATAL(load_configuration(lwresd_g_conffile, server,
 					      true),
@@ -8943,8 +8952,10 @@ run_server(isc_task_t *task, isc_event_t *event) {
 		CHECKFATAL(load_configuration(ns_g_conffile, server, true),
 			   "loading configuration");
 
+	// 哈希初始化
 	isc_hash_init();
 
+	// 加载 zone
 	CHECKFATAL(load_zones(server, true, false), "loading zones");
 #ifdef ENABLE_AFL
 	ns_g_run_done = true;
@@ -9056,6 +9067,7 @@ shutdown_server(isc_task_t *task, isc_event_t *event) {
 	isc_event_free(&event);
 }
 
+// 创建服务器（view/resolver/网络接口等）
 void
 ns_server_create(isc_mem_t *mctx, ns_server_t **serverp) {
 	isc_result_t result;
@@ -9075,6 +9087,7 @@ ns_server_create(isc_mem_t *mctx, ns_server_t **serverp) {
 	result = isc_quota_init(&server->recursionquota, 100);
 	RUNTIME_CHECK(result == ISC_R_SUCCESS);
 
+	// 初始化 ACL 环境（访问控制列表）
 	result = dns_aclenv_init(mctx, &server->aclenv);
 	RUNTIME_CHECK(result == ISC_R_SUCCESS);
 
@@ -9093,14 +9106,17 @@ ns_server_create(isc_mem_t *mctx, ns_server_t **serverp) {
 	server->keepresporder = NULL;
 
 	/* Must be first. */
+	// 初始化加密库，使用 ns_g_entropy 作为熵源
 	CHECKFATAL(dst_lib_init2(ns_g_mctx, ns_g_entropy,
 				 ns_g_engine, ISC_ENTROPY_GOODONLY),
 		   "initializing DST");
 
+	// 根域相关，递归查询时会用到
 	CHECKFATAL(dns_rootns_create(mctx, dns_rdataclass_in, NULL,
 				     &server->in_roothints),
 		   "setting up root hints");
 
+	// 注册 reload 事件
 	CHECKFATAL(isc_mutex_init(&server->reload_event_lock),
 		   "initializing reload event lock");
 	server->reload_event =
@@ -9123,12 +9139,14 @@ ns_server_create(isc_mem_t *mctx, ns_server_t **serverp) {
 	 * startup and shutdown of the server, as well as all exclusive
 	 * tasks.
 	 */
+	// 创建关闭 server 的 task
 	CHECKFATAL(isc_task_create(ns_g_taskmgr, 0, &server->task),
 		   "creating server task");
 	isc_task_setname(server->task, "server", server);
 	isc_taskmgr_setexcltask(ns_g_taskmgr, server->task);
 	CHECKFATAL(isc_task_onshutdown(server->task, shutdown_server, server),
 		   "isc_task_onshutdown");
+	// 创建运行 server 的 task
 	CHECKFATAL(isc_app_onrun(ns_g_mctx, server->task, run_server, server),
 		   "isc_app_onrun");
 
@@ -9140,12 +9158,14 @@ ns_server_create(isc_mem_t *mctx, ns_server_t **serverp) {
 	server->interface_interval = 0;
 	server->heartbeat_interval = 0;
 
+	// 创建 zone manager
 	CHECKFATAL(dns_zonemgr_create(ns_g_mctx, ns_g_taskmgr, ns_g_timermgr,
 				      ns_g_socketmgr, &server->zonemgr),
 		   "dns_zonemgr_create");
 	CHECKFATAL(dns_zonemgr_setsize(server->zonemgr, 1000),
 		   "dns_zonemgr_setsize");
 
+	// 创建统计计数器
 	server->statsfile = isc_mem_strdup(server->mctx, "named.stats");
 	CHECKFATAL(server->statsfile == NULL ? ISC_R_NOMEMORY : ISC_R_SUCCESS,
 		   "isc_mem_strdup");
@@ -9255,13 +9275,14 @@ ns_server_create(isc_mem_t *mctx, ns_server_t **serverp) {
 	CHECKFATAL(ns_controls_create(server, &server->controls),
 		   "ns_controls_create");
 	server->dispatchgen = 0;
-	ISC_LIST_INIT(server->dispatches);
+	// 初始化链表
+	ISC_LIST_INIT(server->dispatches); // 负责管理用于查询、响应处理的 DNS 相关对象
 
-	ISC_LIST_INIT(server->statschannels);
+	ISC_LIST_INIT(server->statschannels); // 负责管理用于统计报告的 HTTP/HTTPS 监听器
 
-	ISC_LIST_INIT(server->cachelist);
+	ISC_LIST_INIT(server->cachelist); // 管理可在不同视图之间共享的 DNS 缓存实例
 
-	ISC_LIST_INIT(server->altsecrets);
+	ISC_LIST_INIT(server->altsecrets); // 负责管理用于服务器认证的备用 DNS Cookie 密钥
 
 	server->sessionkey = NULL;
 	server->session_keyfile = NULL;

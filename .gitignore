@@ -60,3 +60,5 @@ timestamp
 /cppcheck_html/
 /cppcheck.results
 /util/check-make-install
+
+.cache/
