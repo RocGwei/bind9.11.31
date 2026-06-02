@@ -33,7 +33,7 @@
 #include <json-c/json_object_iterator.h>
 #include <json-c/json_c_version.h>
 #else
-#include <json/json.h>
+#include <json-c/json.h>
 #endif
 #endif
 
