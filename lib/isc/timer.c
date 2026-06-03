@@ -677,6 +677,7 @@ dispatch(isc__timermgr_t *manager, isc_time_t *now) {
 	 */
 
 	while (manager->nscheduled > 0 && !done) {
+		// 堆中顶部的元素是截至时间最近的元素
 		timer = isc_heap_element(manager->heap, 1);
 		INSIST(timer != NULL && timer->type != isc_timertype_inactive);
 		if (isc_time_compare(now, &timer->due) >= 0) {
@@ -885,6 +886,7 @@ isc__timermgr_create(isc_mem_t *mctx, isc_timermgr_t **managerp) {
 	manager->nscheduled = 0;
 	isc_time_settoepoch(&manager->due);
 	manager->heap = NULL;
+	// 定时器使用的堆是小顶堆
 	result = isc_heap_create(mctx, sooner, set_index, 0, &manager->heap);
 	if (result != ISC_R_SUCCESS) {
 		INSIST(result == ISC_R_NOMEMORY);
@@ -910,6 +912,7 @@ isc__timermgr_create(isc_mem_t *mctx, isc_timermgr_t **managerp) {
 						ISC_MSG_FAILED, "failed"));
 		return (ISC_R_UNEXPECTED);
 	}
+	// 启动定时器管理器的主线程
 	if (isc_thread_create(run, manager, &manager->thread) !=
 	    ISC_R_SUCCESS) {
 		isc_mem_detach(&manager->mctx);

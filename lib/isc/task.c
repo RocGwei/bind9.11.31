@@ -1100,6 +1100,7 @@ dispatch(isc__taskmgr_t *manager) {
 			XTHREADTRACE(isc_msgcat_get(isc_msgcat,
 						    ISC_MSGSET_GENERAL,
 						    ISC_MSG_WAIT, "wait"));
+			// 如果就绪队列为空或有暂停、排他请求，等待 work_available 条件变量
 			WAIT(&manager->work_available, &manager->lock);
 			XTHREADTRACE(isc_msgcat_get(isc_msgcat,
 						    ISC_MSGSET_TASK,
@@ -1113,6 +1114,7 @@ dispatch(isc__taskmgr_t *manager) {
 		XTHREADTRACE(isc_msgcat_get(isc_msgcat, ISC_MSGSET_TASK,
 					    ISC_MSG_WORKING, "working"));
 
+		// 从就绪队列或排他队列中弹出 task
 		task = pop_readyq(manager);
 		if (task != NULL) {
 			unsigned int dispatch_count = 0;
@@ -1132,9 +1134,9 @@ dispatch(isc__taskmgr_t *manager) {
 			manager->tasks_running++;
 			UNLOCK(&manager->lock);
 
-			LOCK(&task->lock);
+			LOCK(&task->lock); // 持有 task 锁
 			INSIST(task->state == task_state_ready);
-			task->state = task_state_running;
+			task->state = task_state_running; // 将 task 状态置为 运行
 			XTRACE(isc_msgcat_get(isc_msgcat, ISC_MSGSET_GENERAL,
 					      ISC_MSG_RUNNING, "running"));
 			TIME_NOW(&task->tnow);
@@ -1156,7 +1158,7 @@ dispatch(isc__taskmgr_t *manager) {
 						UNLOCK(&task->lock);
 						(event->ev_action)(
 							(isc_task_t *)task,
-							event);
+							event); // 运行实际回调
 						LOCK(&task->lock);
 					}
 					dispatch_count++;
@@ -1237,7 +1239,7 @@ dispatch(isc__taskmgr_t *manager) {
 							      "quantum"));
 					task->state = task_state_ready;
 					requeue = true;
-					done = true;
+					done = true; // 如果到达连续运行的task上限则退出
 				}
 			} while (!done);
 			UNLOCK(&task->lock);
@@ -1298,7 +1300,7 @@ dispatch(isc__taskmgr_t *manager) {
 		 * point and continue with the regular ready queue.
 		 */
 		if (manager->tasks_running == 0 && empty_readyq(manager)) {
-			manager->mode = isc_taskmgrmode_normal;
+			manager->mode = isc_taskmgrmode_normal; // 如果特权模式下就绪队列为空则变为正常模式
 			if (!empty_readyq(manager))
 				BROADCAST(&manager->work_available);
 		}
@@ -1400,12 +1402,12 @@ isc__taskmgr_create(isc_mem_t *mctx, unsigned int workers,
 	manager->common.methods = &taskmgrmethods;
 	manager->common.impmagic = TASK_MANAGER_MAGIC;
 	manager->common.magic = ISCAPI_TASKMGR_MAGIC;
-	manager->mode = isc_taskmgrmode_normal;
+	manager->mode = isc_taskmgrmode_normal; // 初始化模式为普通模式
 	manager->mctx = NULL;
-	result = isc_mutex_init(&manager->lock);
+	result = isc_mutex_init(&manager->lock); // 初始化主锁
 	if (result != ISC_R_SUCCESS)
 		goto cleanup_mgr;
-	result = isc_mutex_init(&manager->excl_lock);
+	result = isc_mutex_init(&manager->excl_lock); // 初始化排他锁
 	if (result != ISC_R_SUCCESS) {
 		DESTROYLOCK(&manager->lock);
 		goto cleanup_mgr;
@@ -1447,11 +1449,11 @@ isc__taskmgr_create(isc_mem_t *mctx, unsigned int workers,
 	if (default_quantum == 0)
 		default_quantum = DEFAULT_DEFAULT_QUANTUM;
 	manager->default_quantum = default_quantum;
-	INIT_LIST(manager->tasks);
-	INIT_LIST(manager->ready_tasks);
-	INIT_LIST(manager->ready_priority_tasks);
-	manager->tasks_running = 0;
-	manager->tasks_ready = 0;
+	INIT_LIST(manager->tasks); // 所有 task 的列表
+	INIT_LIST(manager->ready_tasks); // 普通就绪 task 队列
+	INIT_LIST(manager->ready_priority_tasks); // 优先就绪 task 队列
+	manager->tasks_running = 0; // 当前正在运行的 task 数
+	manager->tasks_ready = 0; // 就绪 task 数
 	manager->exclusive_requested = false;
 	manager->pause_requested = false;
 	manager->exiting = false;
