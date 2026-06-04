@@ -4126,6 +4126,7 @@ process_fds(isc__socketmgr_t *manager, struct kevent *events, int nevents) {
 	return (done);
 }
 #elif defined(USE_EPOLL)
+// 处理所有事件
 static bool
 process_fds(isc__socketmgr_t *manager, struct epoll_event *events, int nevents)
 {
@@ -4231,6 +4232,7 @@ process_fds(isc__socketmgr_t *manager, int maxfd, fd_set *readfds,
 #endif
 
 #ifdef USE_WATCHER_THREAD
+// 处理控制事件
 static bool
 process_ctlfd(isc__socketmgr_t *manager) {
 	int msg, fd;
@@ -4451,6 +4453,7 @@ isc__socketmgr_maxudp(isc_socketmgr_t *manager0, unsigned int maxudp) {
  * Create a new socket manager.
  */
 
+// 对于 epoll，会创建 epoll 实例，并将 pipef_ds 也加入 epoll 的监听集合中
 static isc_result_t
 setup_watcher(isc_mem_t *mctx, isc__socketmgr_t *manager) {
 	isc_result_t result;
@@ -4493,7 +4496,7 @@ setup_watcher(isc_mem_t *mctx, isc__socketmgr_t *manager) {
 				      manager->nevents);
 	if (manager->events == NULL)
 		return (ISC_R_NOMEMORY);
-	manager->epoll_fd = epoll_create(manager->nevents);
+	manager->epoll_fd = epoll_create(manager->nevents); // 创建 epoll 实例
 	if (manager->epoll_fd == -1) {
 		result = isc__errno2result(errno);
 		isc__strerror(errno, strbuf, sizeof(strbuf));
@@ -4507,6 +4510,7 @@ setup_watcher(isc_mem_t *mctx, isc__socketmgr_t *manager) {
 		return (result);
 	}
 #ifdef USE_WATCHER_THREAD
+	// 将 pipe 控制 fd 加入 epoll 监听，以便其他线程通过 pipe_fds 和 watcher 通信
 	result = watch_fd(manager, manager->pipe_fds[0], SELECT_POKE_READ);
 	if (result != ISC_R_SUCCESS) {
 		close(manager->epoll_fd);

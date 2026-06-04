@@ -73,20 +73,20 @@ typedef struct isc__timermgr isc__timermgr_t;
 struct isc__timer {
 	/*! Not locked. */
 	isc_timer_t			common;
-	isc__timermgr_t *		manager;
+	isc__timermgr_t *		manager; // 指向所属的 timermgr
 	isc_mutex_t			lock;
 	/*! Locked by timer lock. */
 	unsigned int			references;
-	isc_time_t			idle;
+	isc_time_t			idle; // 空闲超时时间，通过 isc_timer_touch() 更新
 	/*! Locked by manager lock. */
 	isc_timertype_t			type;
-	isc_time_t			expires;
-	isc_interval_t			interval;
-	isc_task_t *			task;
-	isc_taskaction_t		action;
+	isc_time_t			expires; // 绝对到期时间，对于 ticker 无意义
+	isc_interval_t			interval; // 周期 due 的间隔
+	isc_task_t *			task; // 到期时通过 `isc_task_send()` 将事件发送到此 task
+	isc_taskaction_t		action; // 定时器事件在 worker 线程中被 dispatch 时调用
 	void *				arg;
 	unsigned int			index;
-	isc_time_t			due;
+	isc_time_t			due; // 周期定时器使用，由 schedule() 计算
 	LINK(isc__timer_t)		link;
 };
 
@@ -681,7 +681,9 @@ dispatch(isc__timermgr_t *manager, isc_time_t *now) {
 		timer = isc_heap_element(manager->heap, 1);
 		INSIST(timer != NULL && timer->type != isc_timertype_inactive);
 		if (isc_time_compare(now, &timer->due) >= 0) {
+			// 当前时间大于或等于最近的截至时间，堆顶任务需要执行
 			if (timer->type == isc_timertype_ticker) {
+				// 周期性定时器，发送事件并重新调度
 				type = ISC_TIMEREVENT_TICK;
 				post_event = true;
 				need_schedule = true;
@@ -689,10 +691,12 @@ dispatch(isc__timermgr_t *manager, isc_time_t *now) {
 				int cmp;
 				cmp = isc_time_compare(now, &timer->expires);
 				if (cmp >= 0) {
+					// 生命周期结束的有限定时器，发送事件，不重新调度
 					type = ISC_TIMEREVENT_LIFE;
 					post_event = true;
 					need_schedule = false;
 				} else {
+					// 生命周期未结束的有限定时器，发送事件并重新调度
 					type = ISC_TIMEREVENT_TICK;
 					post_event = true;
 					need_schedule = true;
@@ -700,6 +704,7 @@ dispatch(isc__timermgr_t *manager, isc_time_t *now) {
 			} else if (!isc_time_isepoch(&timer->expires) &&
 				   isc_time_compare(now,
 						    &timer->expires) >= 0) {
+				// 生命周期结束的单次定时器，发送事件，不重新调度
 				type = ISC_TIMEREVENT_LIFE;
 				post_event = true;
 				need_schedule = false;
@@ -809,10 +814,12 @@ run(void *uap) {
 						   ISC_MSG_WAITUNTIL,
 						   "waituntil"),
 				    manager->due, now);
+			// 堆中还有活跃的定时器，进行超时等待
 			result = WAITUNTIL(&manager->wakeup, &manager->lock, &manager->due);
 			INSIST(result == ISC_R_SUCCESS ||
 			       result == ISC_R_TIMEDOUT);
 		} else {
+			// 没有任何活跃的定时器，无限期等待（什么情况下唤醒）
 			XTRACETIME(isc_msgcat_get(isc_msgcat, ISC_MSGSET_GENERAL,
 						  ISC_MSG_WAIT, "wait"), now);
 			WAIT(&manager->wakeup, &manager->lock);
