@@ -2508,6 +2508,7 @@ client_request(isc_task_t *task, isc_event_t *event) {
 	ncr_inc(ns_client_requests);
 
 	if (event->ev_type == ISC_SOCKEVENT_RECVDONE) {
+		// UDP 处理
 		INSIST(!TCP_CLIENT(client));
 		sevent = (isc_socketevent_t *)event;
 		REQUIRE(sevent == client->recvevent);
@@ -2515,10 +2516,12 @@ client_request(isc_task_t *task, isc_event_t *event) {
 		isc_buffer_add(&tbuffer, sevent->n);
 		buffer = &tbuffer;
 		result = sevent->result;
+		// 提取 addr
 		if (result == ISC_R_SUCCESS) {
 			client->peeraddr = sevent->address;
 			client->peeraddr_valid = true;
 		}
+		// 提取 DSCP
 		if ((sevent->attributes & ISC_SOCKEVENTATTR_DSCP) != 0) {
 			ns_client_log(client, NS_LOGCATEGORY_CLIENT,
 			      NS_LOGMODULE_CLIENT, ISC_LOG_DEBUG(90),
@@ -2526,14 +2529,17 @@ client_request(isc_task_t *task, isc_event_t *event) {
 			if (client->dscp == -1)
 				client->dscp = sevent->dscp;
 		}
+		// 提取 pktinfo
 		if ((sevent->attributes & ISC_SOCKEVENTATTR_PKTINFO) != 0) {
 			client->attributes |= NS_CLIENTATTR_PKTINFO;
 			client->pktinfo = sevent->pktinfo;
 		}
+		// 提取多播信息
 		if ((sevent->attributes & ISC_SOCKEVENTATTR_MULTICAST) != 0)
 			client->attributes |= NS_CLIENTATTR_MULTICAST;
 		client->nrecvs--;
 	} else {
+		// TCP 处理，读取 信息
 		INSIST(TCP_CLIENT(client));
 		INSIST(client->tcpconn != NULL);
 		REQUIRE(event->ev_type == DNS_EVENT_TCPMSG);
@@ -2560,6 +2566,7 @@ client_request(isc_task_t *task, isc_event_t *event) {
 	client->tnow = client->requesttime;
 	client->now = isc_time_seconds(&client->tnow);
 
+	// 接收失败处理
 	if (result != ISC_R_SUCCESS) {
 		if (TCP_CLIENT(client)) {
 			ns_client_next(client, result);
@@ -2698,6 +2705,7 @@ client_request(isc_task_t *task, isc_event_t *event) {
 	/*
 	 * It's a request.  Parse it.
 	 */
+	// 解析 DNS 消息头部
 	result = dns_message_parse(client->message, buffer, 0);
 	if (result != ISC_R_SUCCESS) {
 		/*
@@ -2723,6 +2731,7 @@ client_request(isc_task_t *task, isc_event_t *event) {
 	/*
 	 * Pipeline TCP query processing.
 	 */
+	// TCP 流水线处理
 	if (TCP_CLIENT(client)) {
 		if (client->message->opcode != dns_opcode_query) {
 			client->tcpconn->pipelined = false;
@@ -2908,6 +2917,7 @@ client_request(isc_task_t *task, isc_event_t *event) {
 	/*
 	 * Find a view that matches the client's source address.
 	 */
+	// 匹配 view
 	for (view = ISC_LIST_HEAD(ns_g_server->viewlist);
 	     view != NULL;
 	     view = ISC_LIST_NEXT(view, link)) {
@@ -3122,6 +3132,7 @@ client_request(isc_task_t *task, isc_event_t *event) {
 	/*
 	 * Dispatch the request.
 	 */
+	// 根据 opcode 分发请求
 	switch (client->message->opcode) {
 	case dns_opcode_query:
 		CTRACE("query");
